@@ -4,10 +4,13 @@ LIBS=
 
 all: memalloc
 
-memalloc: main.c
+memalloc: main.o
+	@mv $< $@
+
+%.o: %.c
 	$(CC) $(CFLAGS) $^ -o $@ $(LIBS)
 
 clean:
-	@rm -rf memalloc
+	@rm -rf memalloc *.o *.out
 
 .PHONY: all clean

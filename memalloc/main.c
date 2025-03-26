@@ -13,8 +13,10 @@
 #define HEAP_CAPACITY (2 << 19)  // 512 KB
 #define CHUNK_LIST_CAPACITY 1024
 
-uint8_t heap[HEAP_CAPACITY] = {0};
-// size_t heap_size = 0;
+static_assert(HEAP_CAPACITY % sizeof(uintptr_t) == 0,
+              "The heap capacity is not disible by the size of the pointer of "
+              "the platform.");
+uintptr_t heap[HEAP_CAPACITY] = {0};
 
 // Metadata of heap area
 typedef struct {
@@ -31,7 +33,7 @@ Chunk_List alloced_chunks = {0};
 Chunk_List freed_chunks = {
     .chunks = {{
         .addr = &heap,
-        .size = HEAP_CAPACITY,
+        .size = sizeof(heap),
     }},
     .count = 1,
 };
