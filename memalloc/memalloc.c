@@ -1,33 +1,9 @@
+#include "memalloc.h"
 #include <assert.h>
-#include <stdbool.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-#define unimplemented()                                                      \
-    do {                                                                     \
-        printf("%s:%d %s is unimplemented\n", __FILE__, __LINE__, __func__); \
-        assert(false);                                                       \
-    } while (0)
-
-#define HEAP_CAPACITY (2 << 19)  // 512 KB
-#define CHUNK_LIST_CAPACITY 1024
-
-static_assert(HEAP_CAPACITY % sizeof(uintptr_t) == 0,
-              "The heap capacity is not disible by the size of the pointer of "
-              "the platform.");
-uintptr_t heap[HEAP_CAPACITY] = {0};
-
-// Metadata of heap area
-typedef struct {
-    void *addr;
-    size_t size;
-} Chunk;
-
-typedef struct {
-    Chunk chunks[CHUNK_LIST_CAPACITY];
-    size_t count;
-} Chunk_List;
+uintptr_t heap[HEAP_CAPACITY / sizeof(uintptr_t)] = {0};
 
 Chunk_List alloced_chunks = {0};
 Chunk_List freed_chunks = {
@@ -39,7 +15,7 @@ Chunk_List freed_chunks = {
 };
 Chunk_List temp_chunks = {0};
 
-static int chunk_compare(const void *a, const void *b)
+int chunk_compare(const void *a, const void *b)
 {
     Chunk *chunk_a = (Chunk *) a;
     Chunk *chunk_b = (Chunk *) b;
@@ -129,6 +105,37 @@ void chunk_list_dump(Chunk_List *chunk_list)
     }
 }
 
+Node *generate_tree(size_t level_cur, size_t level_max)
+{
+    if (level_cur >= level_max) {
+        return NULL;
+    }
+    Node *node = malloc(sizeof(Node));
+    assert(level_cur + 'a' <= 'z');
+    node->x = level_cur + 'a';
+    node->left = generate_tree(level_cur + 1, level_max);
+    node->right = generate_tree(level_cur + 1, level_max);
+    return node;
+}
+
+void print_tree(Node *root, Jim *jim)
+{
+    if (root) {
+        jim_object_begin(jim);
+
+        jim_member_key(jim, "value");
+        jim_string_sized(jim, &root->x, 1);
+        jim_member_key(jim, "left");
+        print_tree(root->left, jim);
+        jim_member_key(jim, "right");
+        print_tree(root->right, jim);
+
+        jim_object_end(jim);
+    } else {
+        jim_null(jim);
+    }
+}
+
 void *heap_alloc(size_t size)
 {
     if (size == 0) {
@@ -138,30 +145,28 @@ void *heap_alloc(size_t size)
     chunk_list_merge(&freed_chunks, &temp_chunks);
     freed_chunks = temp_chunks;
 
+    const size_t size_words =
+        (size + sizeof(uintptr_t) - 1) / sizeof(uintptr_t);
+    const size_t size_bytes = size_words * sizeof(uintptr_t);
+
     for (size_t i = 0; i < freed_chunks.count; i++) {
         const Chunk chunk = freed_chunks.chunks[i];
-        if (chunk.size >= size) {
-            size_t tail_size = chunk.size - size;
+        if (chunk.size >= size_bytes) {
+            size_t tail_size = chunk.size - size_bytes;
 
             chunk_list_remove(&freed_chunks, i);
-            chunk_list_insert(&alloced_chunks, chunk.addr, size);
+            chunk_list_insert(&alloced_chunks, chunk.addr, size_bytes);
 
             if (tail_size > 0) {
-                chunk_list_insert(&freed_chunks,
-                                  (void *) ((uintptr_t) chunk.addr + size),
-                                  tail_size);
+                chunk_list_insert(
+                    &freed_chunks,
+                    (void *) ((uintptr_t) chunk.addr + size_bytes), tail_size);
             }
 
             return chunk.addr;
         }
     }
     return NULL;
-
-    // assert(heap_size + size <= HEAP_CAPACITY);
-    // void *ptr = heap + heap_size;
-    // heap_size += size;
-    // chunk_list_insert(&alloced_chunks, ptr, size);
-    // return ptr;
 }
 
 void heap_free(void *ptr)
@@ -186,21 +191,29 @@ void heap_collect(void)
 
 int main(void)
 {
-    for (size_t i = 0; i < 16; i++) {
-        void *root = heap_alloc(i);
-        if (i % 2 == 0) {
-            heap_free(root);
-        }
-    }
+    // for (size_t i = 0; i < 20; i++) {
+    //     void *root = heap_alloc(i);
+    //     if (i % 2 == 0) {
+    //         heap_free(root);
+    //     }
+    // }
 
-    heap_alloc(16);
+    // heap_alloc(10);
 
-    printf("Heap alloced:\n");
-    chunk_list_dump(&alloced_chunks);
-    printf("Heap freed:\n");
-    chunk_list_dump(&freed_chunks);
+    // printf("Heap alloced:\n");
+    // chunk_list_dump(&alloced_chunks);
+    // printf("Heap freed:\n");
+    // chunk_list_dump(&freed_chunks);
 
-    heap_collect();
+    // heap_collect();
+
+    Node *tree = generate_tree(0, 5);
+    Jim jim = {
+        .sink = stdout,
+        .write = (Jim_Write) fwrite,
+    };
+    assert(tree);
+    print_tree(tree, &jim);
 
     return 0;
 }

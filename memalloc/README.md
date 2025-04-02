@@ -12,3 +12,4 @@ $ ./memalloc
 ## References
 
 - Tsoding: [memalloc](https://github.com/tsoding/memalloc/)
+- JSON Serialization Library in C: https://github.com/tsoding/jim
