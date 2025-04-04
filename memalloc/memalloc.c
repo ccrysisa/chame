@@ -1,6 +1,7 @@
 #include "memalloc.h"
 #include <assert.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,11 +9,12 @@
 uintptr_t heap[HEAP_CAPACITY_WORDS] = {0};
 const uintptr_t *stack_base = NULL;
 bool reachable_chunks[CHUNK_LIST_CAPACITY] = {false};
+uintptr_t *to_free_chunks[CHUNK_LIST_CAPACITY] = {NULL};
 
 Chunk_List alloced_chunks = {0};
 Chunk_List freed_chunks = {
     .chunks = {{
-        .addr = &heap,
+        .addr = heap,
         .size = HEAP_CAPACITY_WORDS,
     }},
     .count = 1,
@@ -90,7 +92,7 @@ void chunk_list_merge(const Chunk_List *src, Chunk_List *dst)
         } else {
             Chunk *const chunk = &dst->chunks[dst->count - 1];
 
-            if ((char *) chunk->addr + chunk->size == src->chunks[i].addr) {
+            if (chunk->addr + chunk->size == src->chunks[i].addr) {
                 chunk->size += src->chunks[i].size;
             } else {
                 chunk_list_insert(dst, src->chunks[i].addr,
@@ -100,11 +102,11 @@ void chunk_list_merge(const Chunk_List *src, Chunk_List *dst)
     }
 }
 
-void chunk_list_dump(Chunk_List *chunk_list)
+void chunk_list_dump(const Chunk_List *chunk_list, const char *name)
 {
-    printf("chunks (#%zu)\n", chunk_list->count);
+    printf("%s chunks (#%zu)\n", name, chunk_list->count);
     for (size_t i = 0; i < chunk_list->count; i++) {
-        printf("  addr: %p\t", chunk_list->chunks[i].addr);
+        printf("  addr: %p\t", (void *) chunk_list->chunks[i].addr);
         printf("  size: %zu\n", chunk_list->chunks[i].size);
     }
 }
@@ -157,9 +159,6 @@ void *heap_alloc(size_t size)
         return NULL;
     }
 
-    chunk_list_merge(&freed_chunks, &temp_chunks);
-    freed_chunks = temp_chunks;
-
     const size_t size_words =
         (size + sizeof(uintptr_t) - 1) / sizeof(uintptr_t);
 
@@ -172,10 +171,8 @@ void *heap_alloc(size_t size)
             chunk_list_insert(&alloced_chunks, chunk.addr, size_words);
 
             if (tail_size > 0) {
-                chunk_list_insert(
-                    &freed_chunks,
-                    (void *) ((uintptr_t *) chunk.addr + size_words),
-                    tail_size);
+                chunk_list_insert(&freed_chunks, chunk.addr + size_words,
+                                  tail_size);
             }
 
             return chunk.addr;
@@ -206,12 +203,10 @@ static void mark_region(const uintptr_t *start, const uintptr_t *end)
         const uintptr_t *p = (uintptr_t *) (*start);
         for (size_t i = 0; i < alloced_chunks.count; i++) {
             const Chunk *chunk = &alloced_chunks.chunks[i];
-            if (p >= (uintptr_t *) chunk->addr &&
-                p < (uintptr_t *) chunk->addr + chunk->size &&
+            if (p >= chunk->addr && p < chunk->addr + chunk->size &&
                 !reachable_chunks[i]) {
                 reachable_chunks[i] = true;
-                mark_region((uintptr_t *) chunk->addr,
-                            (uintptr_t *) chunk->addr + chunk->size);
+                mark_region(chunk->addr, chunk->addr + chunk->size);
             }
         }
     }
@@ -220,20 +215,28 @@ static void mark_region(const uintptr_t *start, const uintptr_t *end)
 void heap_collect(void)
 {
     const uintptr_t *stack_start = __builtin_frame_address(0);
-    memset(reachable_chunks, 0, sizeof(reachable_chunks));
 
     // mark all reachable chunks recursively
+    memset(reachable_chunks, 0, sizeof(reachable_chunks));
     mark_region(stack_start, stack_base);
 
-    const Chunk_List *chunk_list = &alloced_chunks;
-    printf("chunks (#%zu)\n", chunk_list->count);
-    for (size_t i = 0; i < chunk_list->count; i++) {
-        printf("  addr: %p\t", chunk_list->chunks[i].addr);
-        printf("  size: %zu\t", chunk_list->chunks[i].size);
-        printf("  reachable: %s\n", reachable_chunks[i] ? "true" : "false");
+    // remove all unreachable chunks
+    memset(to_free_chunks, 0, sizeof(to_free_chunks));
+    size_t to_free_chunks_count = 0;
+    for (size_t i = 0; i < alloced_chunks.count; i++) {
+        if (!reachable_chunks[i]) {
+            assert(to_free_chunks_count < CHUNK_LIST_CAPACITY);
+            to_free_chunks[to_free_chunks_count++] =
+                alloced_chunks.chunks[i].addr;
+        }
+    }
+    for (size_t i = 0; i < to_free_chunks_count; i++) {
+        heap_free(to_free_chunks[i]);
     }
 
-    // remove all unreachable chunks
+    // merge adjacent chunks
+    chunk_list_merge(&freed_chunks, &temp_chunks);
+    freed_chunks = temp_chunks;
 }
 
 int main(void)
@@ -241,9 +244,7 @@ int main(void)
     stack_base = (uintptr_t *) __builtin_frame_address(0);
     assert((uintptr_t) stack_base % sizeof(uintptr_t) == 0);
 
-    size_t level = 3;
-    Node *root = generate_tree(0, level);
-    printf("%p\n", (void *) root);
+    Node *root = generate_tree(0, 5);
     Jim jim = {
         .sink = stdout,
         .write = (Jim_Write) fwrite,
@@ -254,30 +255,16 @@ int main(void)
 
     heap_collect();
 
+    chunk_list_dump(&alloced_chunks, "allocated");
+    chunk_list_dump(&freed_chunks, "freed");
+
     printf("\n--------------------------\n");
 
     root = NULL;
     heap_collect();
 
-    // size_t heap_ptrs_count = 0;
-    // for (size_t i = 0; i < alloced_chunks.count; i++) {
-    //     for (size_t j = 0; j < alloced_chunks.chunks[i].size; j++) {
-    //         void *p = (void *) ((uintptr_t *)
-    //         alloced_chunks.chunks[i].addr)[j]; if (p >= (void *) heap &&
-    //             p < (void *) (heap + HEAP_CAPACITY_WORDS)) {
-    //             printf("DETECTED HEAP POINTER: %p\n", p);
-    //             heap_ptrs_count++;
-    //         }
-    //     }
-    // }
-    // // heap_ptrs_count == 2^n - 2 which n is the tree's level
-    // assert(heap_ptrs_count == (size_t) (1 << level) - 2);
-    // printf("Detected %zu heap pointers\n", heap_ptrs_count);
-
-    // printf("Heap alloced:\n");
-    // chunk_list_dump(&alloced_chunks);
-    // printf("Heap freed:\n");
-    // chunk_list_dump(&freed_chunks);
+    chunk_list_dump(&alloced_chunks, "allocated");
+    chunk_list_dump(&freed_chunks, "freed");
 
     return 0;
 }

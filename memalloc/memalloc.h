@@ -26,7 +26,7 @@ static_assert(HEAP_CAPACITY % sizeof(uintptr_t) == 0,
 
 // Metadata of heap area
 typedef struct {
-    void *addr;
+    uintptr_t *addr;
     size_t size;
 } Chunk;
 
@@ -40,7 +40,7 @@ int chunk_list_find(const Chunk_List *chunk_list, void *ptr);
 void chunk_list_insert(Chunk_List *chunk_list, void *ptr, size_t size);
 void chunk_list_remove(Chunk_List *chunk_list, size_t index);
 void chunk_list_merge(const Chunk_List *src, Chunk_List *dst);
-void chunk_list_dump(Chunk_List *chunk_list);
+void chunk_list_dump(const Chunk_List *chunk_list, const char *name);
 
 typedef struct Node {
     char x;
