@@ -15,12 +15,14 @@
         abort();                                                             \
     } while (0)
 
-#define HEAP_CAPACITY (2 << 19)  // 512 KB
+#define HEAP_CAPACITY (1 << 19)  // 512 KB
+// #define HEAP_CAPACITY 64000
 #define CHUNK_LIST_CAPACITY 1024
 
 static_assert(HEAP_CAPACITY % sizeof(uintptr_t) == 0,
               "The heap capacity is not disible by the size of the pointer of "
               "the platform.");
+#define HEAP_CAPACITY_WORDS (HEAP_CAPACITY / sizeof(uintptr_t))
 
 // Metadata of heap area
 typedef struct {

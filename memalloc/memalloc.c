@@ -1,15 +1,16 @@
 #include "memalloc.h"
 #include <assert.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-uintptr_t heap[HEAP_CAPACITY / sizeof(uintptr_t)] = {0};
+uintptr_t heap[HEAP_CAPACITY_WORDS] = {0};
 
 Chunk_List alloced_chunks = {0};
 Chunk_List freed_chunks = {
     .chunks = {{
         .addr = &heap,
-        .size = sizeof(heap),
+        .size = HEAP_CAPACITY_WORDS,
     }},
     .count = 1,
 };
@@ -110,7 +111,7 @@ Node *generate_tree(size_t level_cur, size_t level_max)
     if (level_cur >= level_max) {
         return NULL;
     }
-    Node *node = malloc(sizeof(Node));
+    Node *node = heap_alloc(sizeof(Node));
     assert(level_cur + 'a' <= 'z');
     node->x = level_cur + 'a';
     node->left = generate_tree(level_cur + 1, level_max);
@@ -147,20 +148,20 @@ void *heap_alloc(size_t size)
 
     const size_t size_words =
         (size + sizeof(uintptr_t) - 1) / sizeof(uintptr_t);
-    const size_t size_bytes = size_words * sizeof(uintptr_t);
 
     for (size_t i = 0; i < freed_chunks.count; i++) {
         const Chunk chunk = freed_chunks.chunks[i];
-        if (chunk.size >= size_bytes) {
-            size_t tail_size = chunk.size - size_bytes;
+        if (chunk.size >= size_words) {
+            size_t tail_size = chunk.size - size_words;
 
             chunk_list_remove(&freed_chunks, i);
-            chunk_list_insert(&alloced_chunks, chunk.addr, size_bytes);
+            chunk_list_insert(&alloced_chunks, chunk.addr, size_words);
 
             if (tail_size > 0) {
                 chunk_list_insert(
                     &freed_chunks,
-                    (void *) ((uintptr_t) chunk.addr + size_bytes), tail_size);
+                    (void *) ((uintptr_t *) chunk.addr + size_words),
+                    tail_size);
             }
 
             return chunk.addr;
@@ -207,13 +208,36 @@ int main(void)
 
     // heap_collect();
 
-    Node *tree = generate_tree(0, 5);
+    size_t level = 5;
+    Node *tree = generate_tree(0, level);
     Jim jim = {
         .sink = stdout,
         .write = (Jim_Write) fwrite,
     };
     assert(tree);
     print_tree(tree, &jim);
+
+    printf("--------------------------\n");
+
+    size_t heap_ptrs_count = 0;
+    for (size_t i = 0; i < alloced_chunks.count; i++) {
+        for (size_t j = 0; j < alloced_chunks.chunks[i].size; j++) {
+            void *p = (void *) ((uintptr_t *) alloced_chunks.chunks[i].addr)[j];
+            if (p >= (void *) heap &&
+                p <= (void *) (heap + HEAP_CAPACITY_WORDS)) {
+                printf("DETECTED HEAP POINTER: %p\n", p);
+                heap_ptrs_count++;
+            }
+        }
+    }
+    // heap_ptrs_count == 2^n - 2 which n is the tree's level
+    assert(heap_ptrs_count == (size_t) (1 << level) - 2);
+    printf("Detected %zu heap pointers\n", heap_ptrs_count);
+
+    printf("Heap alloced:\n");
+    chunk_list_dump(&alloced_chunks);
+    printf("Heap freed:\n");
+    chunk_list_dump(&freed_chunks);
 
     return 0;
 }
