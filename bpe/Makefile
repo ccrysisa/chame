@@ -1,4 +1,4 @@
-CFLAGS=-Wall -Wextra -Wswitch-enum -Wmissing-prototypes -pedantic -ggdb
+CFLAGS=-Wall -Wextra -Wswitch-enum -Wmissing-prototypes -std=gnu11 -pedantic -ggdb
 LIBS=
 
 TARGET=bpe

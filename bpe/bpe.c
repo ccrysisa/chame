@@ -8,6 +8,13 @@
 #define STB_DS_IMPLEMENTATION
 #include "stb_ds.h"
 
+#define swap(x, y)       \
+    do {                 \
+        typeof(x) t = x; \
+        (x) = y;         \
+        (y) = t;         \
+    } while (0)
+
 typedef struct Pair {
     uint32_t l;
     uint32_t r;
@@ -17,8 +24,6 @@ typedef struct Freq {
     Pair key;
     size_t value;
 } Freq;
-
-Freq *freq_hm = NULL;  // hash map which store byte pair's frequence
 
 static int freq_compare(const void *a, const void *b)
 {
@@ -41,6 +46,19 @@ static void render_tokens(uint32_t *tokens, Pair *pairs)
     printf("\n");
 }
 
+static void generate_rules(Pair *pairs)
+{
+    printf("digraph Rules {\n");
+    for (size_t i = 0; i < arrlenu(pairs); i++) {
+        if (i == (size_t) pairs[i].l) {
+            continue;
+        }
+        printf("  %zu -> %u\n", i, pairs[i].l);
+        printf("  %zu -> %u\n", i, pairs[i].r);
+    }
+    printf("}\n");
+}
+
 int main(void)
 {
     const char *const text =
@@ -59,60 +77,81 @@ int main(void)
     uint32_t *tokens_out = NULL;  // compressed text
     Pair *pairs = NULL;           // grammer rule table
 
+    // hash map
+    Freq *freq_hm = NULL;  // store byte pair's frequence
+
     for (size_t i = 0; i < text_size; i++) {
         arrput(tokens_in, (uint32_t) text[i]);
     }
 
     // init grammer rule table
+    // ```
+    //  0  -> { .l=0, .r=??? }
+    //  1  -> { .l=1, .r=??? }
+    // ...
+    // 256 -> { .l=256, .r=??? }
+    // ```
     for (size_t i = 0; i < 256; i++) {
         arrput(pairs, (Pair){.l = i});
     }
 
-    // collect byte pair and its frequence
-    for (int i = 0; i < arrlen(tokens_in) - 1; i++) {
-        Pair key = {tokens_in[i], tokens_in[i + 1]};
+    render_tokens(tokens_in, pairs);
 
-        ptrdiff_t i = hmgeti(freq_hm, key);
-        if (i < 0) {
-            hmput(freq_hm, key, 1);
-        } else {
-            freq_hm[i].value++;
-        }
-    }
+    for (;;) {
+        printf("%zu\n", arrlenu(tokens_in));
 
-    // add the most frequent pair to grammer rule table
-    size_t max_freq_index = 0;
-    for (size_t i = 0; i < hmlenu(freq_hm); i++) {
-        if (freq_hm[i].value > freq_hm[max_freq_index].value) {
-            max_freq_index = i;
-        }
-    }
-    const Freq *const freq = &freq_hm[max_freq_index];
-    printf("(%u, %u)\t=> %zu\n", freq->key.l, freq->key.r, freq->value);
-    printf("(%c, %c)\t=> %zu\n", freq->key.l, freq->key.r, freq->value);
-    arrput(pairs, freq_hm[max_freq_index].key);
+        // collect byte pair and its frequence
+        hmfree(freq_hm);
+        freq_hm = NULL;
+        for (int i = 0; i < arrlen(tokens_in) - 1; i++) {
+            Pair key = {tokens_in[i], tokens_in[i + 1]};
 
-    // compress text by replacing byte pair with grammer rule
-    for (size_t i = 0; i < arrlenu(tokens_in);) {
-        if (i + 1 >= arrlenu(tokens_in)) {
-            arrput(tokens_out, tokens_in[i]);
-            i++;
-        } else {
-            if (!memcmp(&freq_hm[max_freq_index].key, &tokens_in[i],
-                        sizeof(Pair))) {
-                arrput(tokens_out, arrlenu(pairs) - 1);
-                i += 2;
+            ptrdiff_t i = hmgeti(freq_hm, key);
+            if (i < 0) {
+                hmput(freq_hm, key, 1);
             } else {
-                arrput(tokens_out, tokens_in[i]);
-                i++;
+                freq_hm[i].value++;
             }
         }
+
+        // add the most frequent pair to grammer rule table
+        size_t max_freq_index = 0;
+        for (size_t i = 0; i < hmlenu(freq_hm); i++) {
+            if (freq_hm[i].value > freq_hm[max_freq_index].value) {
+                max_freq_index = i;
+            }
+        }
+        // compression is done
+        if (freq_hm[max_freq_index].value <= 1) {
+            break;
+        }
+        arrput(pairs, freq_hm[max_freq_index].key);
+
+        // compress text by replacing byte pair with grammer rule
+        arrfree(tokens_out);
+        tokens_out = NULL;
+        for (size_t i = 0; i < arrlenu(tokens_in);) {
+            if (i + 1 >= arrlenu(tokens_in)) {
+                arrput(tokens_out, tokens_in[i]);
+                i++;
+            } else {
+                if (!memcmp(&freq_hm[max_freq_index].key, &tokens_in[i],
+                            sizeof(Pair))) {
+                    arrput(tokens_out, arrlenu(pairs) - 1);
+                    i += 2;
+                } else {
+                    arrput(tokens_out, tokens_in[i]);
+                    i++;
+                }
+            }
+        }
+
+        swap(tokens_in, tokens_out);
     }
 
     render_tokens(tokens_in, pairs);
-    render_tokens(tokens_out, pairs);
-    printf("%zu\n", arrlenu(tokens_in));
-    printf("%zu\n", arrlenu(tokens_out));
+    printf("Grammer rules: %zu (with 256 leaf rules)\n", arrlenu(pairs));
+    generate_rules(pairs);
 
     // for (size_t i = 0; i < arrlenu(pairs); i++) {
     //     printf("%zu: (%u, %u)\n", i, pairs[i].l, pairs[i].r);
