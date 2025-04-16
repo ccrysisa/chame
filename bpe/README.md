@@ -6,13 +6,9 @@ Using [BPE](https://en.wikipedia.org/wiki/Byte_pair_encoding) algorithm to imple
 
 ```sh
 $ make
-$ ./bpe
-```
-
-Generate grammer graph:
-
-```sh
-$ dot -Tpng rules.dot > rules.png
+$ ./build/bper -o <rules.bin>
+$ ./build/bpe2dot -i <rules.bin> -o <rules.dot>
+$ dot -Tpng <rules.dot> > <rules.png>
 ```
 
 ## References

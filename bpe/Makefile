@@ -1,17 +1,15 @@
 CFLAGS=-Wall -Wextra -Wswitch-enum -Wmissing-prototypes -std=gnu11 -pedantic -ggdb
 LIBS=
 
-TARGET=bpe
+BUILD=build
 
-all: $(TARGET)
+all: $(BUILD)/bper $(BUILD)/bpe2dot
 
-$(TARGET): $(TARGET).o
-	@mv $< $@
-
-%.o: %.c
+$(BUILD)/%: %.c bpe.c
+	@if [ ! -d "$(dir $@)" ]; then mkdir -p $(dir $@); fi
 	$(CC) $(CFLAGS) $^ -o $@ $(LIBS)
 
 clean:
-	@rm -rf *.o *.out $(TARGET)
+	@rm -rf $(BUILD)
 
 .PHONY: all clean

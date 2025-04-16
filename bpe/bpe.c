@@ -1,29 +1,11 @@
+#include "bpe.h"
 #include <assert.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <stdio.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define STB_DS_IMPLEMENTATION
 #include "stb_ds.h"
-
-#define swap(x, y)       \
-    do {                 \
-        typeof(x) t = x; \
-        (x) = y;         \
-        (y) = t;         \
-    } while (0)
-
-typedef struct Pair {
-    uint32_t l;
-    uint32_t r;
-} Pair;
-
-typedef struct Freq {
-    Pair key;
-    size_t value;
-} Freq;
 
 static int freq_compare(const void *a, const void *b)
 {
@@ -33,7 +15,7 @@ static int freq_compare(const void *a, const void *b)
 }
 
 // arguments tokens and pairs are both dynamic array.
-static void render_tokens(uint32_t *tokens, Pair *pairs)
+void render_tokens(uint32_t *tokens, Pair *pairs)
 {
     for (size_t i = 0; i < arrlenu(tokens); i++) {
         assert(tokens[i] < arrlenu(pairs));
@@ -46,39 +28,92 @@ static void render_tokens(uint32_t *tokens, Pair *pairs)
     printf("\n");
 }
 
-static void generate_rules(Pair *pairs)
+void generate_rules(FILE *stream, Pair *pairs)
 {
-    printf("digraph Rules {\n");
+    fprintf(stream, "digraph Rules {\n");
     for (size_t i = 0; i < arrlenu(pairs); i++) {
         if (i == (size_t) pairs[i].l) {
             continue;
         }
-        printf("  %zu -> %u\n", i, pairs[i].l);
-        printf("  %zu -> %u\n", i, pairs[i].r);
+        fprintf(stream, "  %zu -> %u\n", i, pairs[i].l);
+        fprintf(stream, "  %zu -> %u\n", i, pairs[i].r);
     }
-    printf("}\n");
+    fprintf(stream, "}\n");
 }
 
-int main(void)
+void load_rules_from_file(Pair **pairs, const char *file_path)
 {
-    const char *const text =
-        "The original BPE algorithm operates by iteratively replacing the most "
-        "common contiguous sequences of characters in a target text with "
-        "unused 'placeholder' bytes. The iteration ends when no sequences can "
-        "be found, leaving the target text effectively compressed. "
-        "Decompression can be performed by reversing this process, querying "
-        "known placeholder terms against their corresponding denoted sequence, "
-        "using a lookup table. In the original paper, this lookup table is "
-        "encoded and stored alongside the compressed text.";
+    assert(*pairs == NULL);
+
+    FILE *f = fopen(file_path, "rb");
+    if (f == NULL) {
+        fprintf(stderr, "ERROR: Could not open file `%s`: %s\n", file_path,
+                strerror(errno));
+        exit(1);
+    }
+
+    if (fseek(f, 0, SEEK_END) < 0) {
+        fprintf(stderr, "ERROR: Could not read file `%s`: %s\n", file_path,
+                strerror(errno));
+        exit(1);
+    }
+
+    long m = ftell(f);
+    if (m < 0) {
+        fprintf(stderr, "ERROR: Counld not read file `%s`: %s\n", file_path,
+                strerror(errno));
+        exit(1);
+    }
+
+    assert(m % sizeof(**pairs) == 0);
+
+    if (fseek(f, 0, SEEK_SET) < 0) {
+        fprintf(stderr, "ERROR: Counld not read file `%s`: %s\n", file_path,
+                strerror(errno));
+        exit(1);
+    }
+
+    Pair *temp = malloc(m);
+    size_t n = fread(temp, sizeof(**pairs), m / sizeof(**pairs), f);
+
+    if (ferror(f)) {
+        fprintf(stderr, "ERROR: Counld not write file `%s`: %s\n", file_path,
+                strerror(errno));
+        exit(1);
+    }
+
+    fclose(f);
+
+    for (size_t i = 0; i < n; i++) {
+        arrput(*pairs, temp[i]);
+    }
+
+    free(temp);
+}
+
+void save_rules_to_file(Pair *pairs, const char *file_path)
+{
+    FILE *f = fopen(file_path, "wb");
+    if (f == NULL) {
+        fprintf(stderr, "ERROR: Could not open file `%s`: %s\n", file_path,
+                strerror(errno));
+        exit(1);
+    }
+
+    fwrite(pairs, sizeof(*pairs), arrlenu(pairs), f);
+
+    if (ferror(f)) {
+        fprintf(stderr, "ERROR: Could not write file `%s`: %s\n", file_path,
+                strerror(errno));
+        exit(1);
+    }
+
+    fclose(f);
+}
+
+void byte_pair_encode(const char *text)
+{
     const size_t text_size = strlen(text);
-
-    // dynamic array
-    uint32_t *tokens_in = NULL;   // original text by replacing char to uint32_t
-    uint32_t *tokens_out = NULL;  // compressed text
-    Pair *pairs = NULL;           // grammer rule table
-
-    // hash map
-    Freq *freq_hm = NULL;  // store byte pair's frequence
 
     for (size_t i = 0; i < text_size; i++) {
         arrput(tokens_in, (uint32_t) text[i]);
@@ -95,11 +130,10 @@ int main(void)
         arrput(pairs, (Pair){.l = i});
     }
 
+    printf("Origin text (%zu):\n", arrlenu(tokens_in));
     render_tokens(tokens_in, pairs);
 
     for (;;) {
-        printf("%zu\n", arrlenu(tokens_in));
-
         // collect byte pair and its frequence
         hmfree(freq_hm);
         freq_hm = NULL;
@@ -146,33 +180,28 @@ int main(void)
             }
         }
 
-        swap(tokens_in, tokens_out);
+        swap(uint32_t *, tokens_in, tokens_out);
     }
 
+    printf("Compressed text (%zu):\n", arrlenu(tokens_in));
     render_tokens(tokens_in, pairs);
+
     printf("Grammer rules: %zu (with 256 leaf rules)\n", arrlenu(pairs));
-    generate_rules(pairs);
-
-    // for (size_t i = 0; i < arrlenu(pairs); i++) {
-    //     printf("%zu: (%u, %u)\n", i, pairs[i].l, pairs[i].r);
-    // }
-
-    /*
-        // sort byte pair by its frequence
-        Freq *freqs = NULL;  // dynamic array
-        for (size_t i = 0; i < hmlenu(freq_hm); i++) {
-            arrput(freqs, freq_hm[i]);
-        }
-
-        qsort(freqs, arrlenu(freqs), sizeof(*freqs), freq_compare);
-
-        for (size_t i = 0; i < arrlenu(freqs); i++) {
-        for (size_t i = 0; i < 10; i++) {
-            const Freq *freq = &freqs[i];
-            printf("(%u, %u)\t=> %zu\n", freq->key.l, freq->key.r, freq->value);
-        }
-
-    */
-
-    return 0;
 }
+
+const char *shift_args(int *argc, char ***argv)
+{
+    assert(*argc > 0);
+    char *result = **argv;
+    *argc -= 1;
+    *argv += 1;
+    return result;
+}
+
+// dynamic array
+uint32_t *tokens_in = NULL;
+uint32_t *tokens_out = NULL;
+Pair *pairs = NULL;
+
+// hash map
+Freq *freq_hm = NULL;

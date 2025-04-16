@@ -1,6 +1,4 @@
 doc/
+build/
 .cache/
-*.dot
-*.png
 compile_commands.json
-bpe
